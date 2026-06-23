@@ -30,7 +30,6 @@ WORKDIR /harness
 
 # Copy source files
 COPY wg_monitor.c          ./
-COPY wg_server_harness.sh  ./
 COPY entrypoint-server.sh ./entrypoint.sh
 
 # Compile monitor daemon
@@ -41,7 +40,7 @@ RUN gcc -O2 -pthread \
         -o wg_monitor wg_monitor.c \
     && chmod +x wg_monitor
 
-RUN chmod +x entrypoint.sh wg_server_harness.sh
+RUN chmod +x entrypoint.sh
 
 # Shared volume mounts (populated at runtime)
 VOLUME ["/shared", "/fuzz-results"]
