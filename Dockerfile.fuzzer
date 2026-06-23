@@ -1,0 +1,33 @@
+# ── WireGuard Fuzz Harness — Fuzzer Container ────────────────────────────────
+# Runs wg_fuzzer.py against the server container.
+# Needs NET_RAW for raw socket support (scapy / fallback paths).
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="wg-fuzz-fuzzer"
+LABEL org.opencontainers.image.description="WireGuard fuzzing harness — protocol fuzzer"
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpcap-dev \
+        tcpdump \
+        curl \
+        jq \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /harness
+
+# Python dependencies first for layer cache efficiency
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy harness source
+COPY wg_fuzzer.py           ./
+COPY generate_report.py     ./
+COPY docker/entrypoint-fuzzer.sh ./entrypoint.sh
+RUN chmod +x entrypoint.sh
+
+VOLUME ["/shared", "/fuzz-results"]
+
+ENTRYPOINT ["/harness/entrypoint.sh"]

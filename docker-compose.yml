@@ -1,0 +1,93 @@
+# ── WireGuard Fuzz Harness — Docker Compose ──────────────────────────────────
+#
+# Prerequisites:
+#   sudo modprobe wireguard        (must be loaded on HOST kernel)
+#   docker compose up --build
+#
+# Environment variables (all optional):
+#   PHASE   Fuzzing phases: 1 | 2 | 3 | 1,2 | all    (default: all)
+#   COUNT   Mutations per strategy                    (default: 30)
+#   DELAY   Seconds between packets                   (default: 0.05)
+#   SEED    PRNG seed for reproducibility             (default: 42)
+#
+# Example: COUNT=100 SEED=1337 PHASE=1 docker compose up --build
+# ---------------------------------------------------------------------------
+
+name: wg-fuzz
+
+networks:
+  wg-fuzz-net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
+
+volumes:
+  shared-config:
+    driver: local
+  fuzz-results:
+    driver: local
+
+services:
+
+  # ── Server container ───────────────────────────────────────────────────────
+  # Runs the WireGuard kernel interface, wg_monitor, and tcpdump.
+  # Requires --privileged for: ip link add type wireguard, AF_PACKET,
+  # /dev/kmsg read, modprobe.
+  wg-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    container_name: wg-server
+    hostname: wg-server
+    privileged: true
+    networks:
+      wg-fuzz-net:
+        ipv4_address: 172.28.0.10
+    volumes:
+      - shared-config:/shared
+      - fuzz-results:/fuzz-results
+      # Expose host /dev/kmsg so monitor can watch kernel messages
+      - /dev/kmsg:/dev/kmsg:ro
+    environment:
+      WG_PORT:    "51820"
+      FUZZER_IP:  "172.28.0.20"
+    ports:
+      - "51820:51820/udp"
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/shared/.server_ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # ── Fuzzer container ───────────────────────────────────────────────────────
+  # Runs wg_fuzzer.py against the server, then generates the HTML report.
+  # NET_RAW needed for raw socket paths (scapy fallback, AF_PACKET in wg_monitor).
+  wg-fuzzer:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.fuzzer
+    container_name: wg-fuzzer
+    hostname: wg-fuzzer
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    networks:
+      wg-fuzz-net:
+        ipv4_address: 172.28.0.20
+    volumes:
+      - shared-config:/shared
+      - fuzz-results:/fuzz-results
+    environment:
+      PHASE:  "${PHASE:-all}"
+      COUNT:  "${COUNT:-30}"
+      DELAY:  "${DELAY:-0.05}"
+      SEED:   "${SEED:-42}"
+    depends_on:
+      wg-server:
+        condition: service_healthy
+    restart: "no"
