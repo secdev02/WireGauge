@@ -20,16 +20,34 @@ die()  { echo -e "${RED}[server]${NC} $*" >&2; exit 1; }
 
 mkdir -p "${LOG_DIR}" "${SHARED_DIR}"
 
-# ── 1. Verify WireGuard kernel module ────────────────────────────────────────
-log "Checking WireGuard kernel module..."
-if ! lsmod 2>/dev/null | grep -q wireguard; then
-    # Try to load it (works if host has the module available)
-    modprobe wireguard 2>/dev/null || true
+# ── 1. Verify WireGuard availability ─────────────────────────────────────────
+# Strategy: attempt to create a temporary WireGuard interface rather than
+# checking lsmod. This handles three configurations correctly:
+#
+#   Linux host (loadable module):
+#     modprobe wireguard loads it; lsmod shows it; ip link succeeds.
+#
+#   Linux host (built-in, CONFIG_WIREGUARD=y):
+#     lsmod shows nothing; modprobe exits non-zero; ip link still succeeds.
+#
+#   macOS Docker Desktop / OrbStack (Apple Silicon):
+#     The linuxkit / Linux VM kernel ships with CONFIG_WIREGUARD=y.
+#     'modprobe wireguard' does not exist and fails, which is expected.
+#     'ip link add type wireguard' succeeds because the kernel has it built-in.
+#     No host-side modprobe or sudo is needed on macOS.
+log "Checking WireGuard availability..."
+modprobe wireguard 2>/dev/null || true   # may succeed on loadable-module kernels
+ip link del _wg_probe 2>/dev/null || true
+if ! ip link add _wg_probe type wireguard 2>/dev/null; then
+    echo ""
+    die "WireGuard is not available in this kernel.
+  On Linux hosts:   sudo modprobe wireguard
+  On macOS:         update Docker Desktop to 4.x+ and enable
+                    Settings -> General -> 'Use Virtualization Framework'
+  On Colima:        colima start --arch aarch64 --vm-type vz"
 fi
-if ! lsmod 2>/dev/null | grep -q wireguard; then
-    die "wireguard kernel module not loaded. Run: sudo modprobe wireguard on the host."
-fi
-log "wireguard module: OK"
+ip link del _wg_probe 2>/dev/null || true
+log "WireGuard: OK (built-in or module)"
 
 # ── 2. Generate keypairs ──────────────────────────────────────────────────────
 log "Generating WireGuard keypairs..."
@@ -105,7 +123,7 @@ tcpdump -i "${CAPTURE_IFACE}" \
 TCPDUMP_PID=$!
 log "tcpdump PID: ${TCPDUMP_PID} -> ${PCAP_FILE}"
 
-# ── 8. Start wg_monitor ───────────────────────────────────────────────────────
+# ── 8. Start wg_monitor (or shell fallback) ──────────────────────────────────
 if [[ -x /harness/wg_monitor ]]; then
     /harness/wg_monitor \
         --port    "${WG_PORT}" \
@@ -115,8 +133,27 @@ if [[ -x /harness/wg_monitor ]]; then
     MONITOR_PID=$!
     log "wg_monitor PID: ${MONITOR_PID} -> ${MONITOR_LOG}"
 else
-    warn "wg_monitor binary not found — kernel log only"
-    MONITOR_PID=""
+    warn "wg_monitor binary not found — using shell dmesg watcher"
+    (
+        dmesg -w --time-format iso 2>/dev/null | while IFS= read -r line; do
+            if echo "${line}" | grep -qiE \
+                'wireguard|WireGuard|BUG:|Oops|panic|KASAN|UBSAN|use-after-free|null-ptr'; then
+                SEV="WARN"
+                echo "${line}" | grep -qiE 'BUG:|Oops|panic|KASAN|UBSAN|use-after-free' \
+                    && SEV="CRASH"
+                MSG=$(printf '%s' "${line}" \
+                    | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')
+                printf '{"ts":"%s","source":"kmsg","severity":"%s","kernel_taint":%s,"msg":%s}\n' \
+                    "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" \
+                    "${SEV}" \
+                    "$(cat /proc/sys/kernel/tainted 2>/dev/null || echo 0)" \
+                    "${MSG}" \
+                    >> "${MONITOR_LOG}"
+            fi
+        done
+    ) &
+    MONITOR_PID=$!
+    log "dmesg watcher PID: ${MONITOR_PID} -> ${MONITOR_LOG}"
 fi
 
 # ── 9. Watchdog: log taint changes, print wg stats every 10 s ────────────────

@@ -1,7 +1,7 @@
 # ── WireGuard Fuzz Harness — Server Container ────────────────────────────────
-# Runs the WireGuard kernel interface + packet monitor + tcpdump.
+# Runs the WireGuard kernel interface, tcpdump capture, and shell-based
+# kernel message monitoring.
 # Requires --privileged (for ip link add type wireguard, AF_PACKET, /dev/kmsg).
-# The host kernel must have wireguard.ko loaded before starting this container.
 FROM ubuntu:22.04
 
 LABEL org.opencontainers.image.title="wg-fuzz-server"
@@ -15,8 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iproute2 \
         iputils-ping \
         tcpdump \
-        gcc \
-        make \
         python3 \
         python3-pip \
         jq \
@@ -28,21 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /harness
 
-# Copy source files
-COPY wg_monitor.c          ./
 COPY entrypoint-server.sh ./entrypoint.sh
-
-# Compile monitor daemon
-RUN gcc -O2 -pthread \
-        -Wno-format-truncation \
-        -Wno-stringop-truncation \
-        -Wno-unused-result \
-        -o wg_monitor wg_monitor.c \
-    && chmod +x wg_monitor
-
 RUN chmod +x entrypoint.sh
 
-# Shared volume mounts (populated at runtime)
 VOLUME ["/shared", "/fuzz-results"]
 
 EXPOSE 51820/udp
