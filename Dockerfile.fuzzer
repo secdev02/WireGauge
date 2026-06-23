@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy harness source
 COPY wg_fuzzer.py           ./
 COPY generate_report.py     ./
-COPY docker/entrypoint-fuzzer.sh ./entrypoint.sh
+COPY entrypoint-fuzzer.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh
 
 VOLUME ["/shared", "/fuzz-results"]

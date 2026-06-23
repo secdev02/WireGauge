@@ -31,7 +31,7 @@ WORKDIR /harness
 # Copy source files
 COPY wg_monitor.c          ./
 COPY wg_server_harness.sh  ./
-COPY docker/entrypoint-server.sh ./entrypoint.sh
+COPY entrypoint-server.sh ./entrypoint.sh
 
 # Compile monitor daemon
 RUN gcc -O2 -pthread \

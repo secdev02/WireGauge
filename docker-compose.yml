@@ -39,7 +39,7 @@ services:
   wg-server:
     build:
       context: .
-      dockerfile: docker/Dockerfile.server
+      dockerfile: Dockerfile.server
     container_name: wg-server
     hostname: wg-server
     privileged: true
@@ -70,7 +70,7 @@ services:
   wg-fuzzer:
     build:
       context: .
-      dockerfile: docker/Dockerfile.fuzzer
+      dockerfile: Dockerfile.fuzzer
     container_name: wg-fuzzer
     hostname: wg-fuzzer
     cap_add:
